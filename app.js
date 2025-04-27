@@ -81,7 +81,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
       return res.send({
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: `Music channel set to <#${channelId}> ${getRandomEmoji()}`,
+          content: `Music channel set to <#${channelId}>`,
         },
       });
     }
@@ -90,27 +90,42 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     if (name === 'recentsongs') {
       try {
         const recentSongs = db.prepare('SELECT * FROM songs ORDER BY id DESC LIMIT 10').all();
-    
-        const responseContent = recentSongs.map(song => {
-          const addedBy = `@silent <@${song.user_id}>`;
-          const date = new Date(song.added_at).toLocaleDateString();
-          const titleLink = `[**${song.title}**](${song.url})`;
-          const albumInfo = song.album && song.album !== 'Unknown Album'
-            ? `(${song.album})`
-            : '';
-          // If the song has no album, just show the title and artist
-          return `${titleLink} by *${song.artist}*${albumInfo} • *${song.genre}*\n→ Added by ${addedBy} on ${date}`;
-        }).join('\n\n');
 
-        // const responseContent = recentSongs.map(song => {
-        //   return `**${song.title}** by ${song.artist} (${song.album}) - Added by <@${song.user_id}> on ${new Date(song.added_at).toLocaleDateString()}`;
-        // }).join('\n');
-    
+        if (recentSongs.length === 0) {
+          return res.send({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: 'No recent songs found.',
+              flags: InteractionResponseFlags.SUPPRESS_EMBEDS,
+            },
+          });
+        }
+
+        // Create an embed object
+        const embed = {
+          title: '🎵  Recent Songs',
+          description: 'Here are the most recently added songs:',
+          color: 0x1db954, // Spotify green color
+          fields: recentSongs.map(song => ({
+            name: "**" + song.title + "** by **" + song.artist + "**",
+            value: [
+              `**[Link to Song](${song.url})**`,
+              song.album && song.album !== 'Unknown Album' ? `**Album**: ${song.album}` : '',
+              `**Genre**: ${song.genre || 'Unknown Genre'}`,
+              `**Added by**: <@${song.user_id}> on <t:${song.added_at}:F>`,
+            ]
+              .filter(Boolean) // Remove empty values
+              .join('\n')
+          })),
+          footer: {
+            text: 'Use /querysongs to search for specific songs!',
+          },
+        };
+
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
-            content: responseContent || 'No recent songs found.',
-            flags: 4, // InteractionResponseFlags.SUPPRESS_EMBEDS
+            embeds: [embed],
           },
         });
       } catch (err) {
@@ -119,7 +134,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
             content: '❌ Failed to fetch recent songs.',
-            flags: 4, // InteractionResponseFlags.SUPPRESS_EMBEDS
+            flags: InteractionResponseFlags.SUPPRESS_EMBEDS,
           },
         });
       }
@@ -131,15 +146,15 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         const messages = await fetchMusic(targetChannelID);
         const urls = extractYouTubeLinks(messages);
         const existing = db.prepare('SELECT url FROM songs').all().map(s => s.url);
-      
+
         let newCount = 0;
-        for (const { url, user } of urls) {
+        for (const { url, user, id, timestamp } of urls) {
           if (!existing.includes(url)) {
-            await insertSong({ url, user: { id: user, username: user } });
+            await insertSong({ url, user: { id: id, username: user }, timestamp });
             newCount++;
           }
         }
-      
+
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
@@ -155,21 +170,30 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           },
         });
       }
-
     }
 
     // Query songs command
     if (name === 'querysongs') {
       try {
         const options = data.options || [];
-        const userQuery = options.find(o => o.name === 'user')?.value?.toLowerCase();
+        let userQuery = options.find(o => o.name === 'user')?.value?.toLowerCase();
         const artistQuery = options.find(o => o.name === 'artist')?.value?.toLowerCase();
         const titleQuery = options.find(o => o.name === 'title')?.value?.toLowerCase();
-    
+
+        let userId = null;
+        const mentionMatch = userQuery?.match(/^<@!?(\d+)>$/);
+        if (mentionMatch) {
+          userId = mentionMatch[1];
+          userQuery = null; // Clear userQuery if we have a userId
+        }
+
         let query = 'SELECT * FROM songs WHERE 1=1';
         const params = [];
-    
-        if (userQuery) {
+
+        if (userId) {
+          query += ' AND user_id = ?';
+          params.push(userId);
+        } else if (userQuery) {
           query += ' AND LOWER(user_name) LIKE ?';
           params.push(`%${userQuery}%`);
         }
@@ -181,24 +205,43 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           query += ' AND LOWER(title) LIKE ?';
           params.push(`%${titleQuery}%`);
         }
-    
+
         query += ' ORDER BY id DESC LIMIT 10';
-    
+
         const matches = db.prepare(query).all(...params);
-    
-        const responseContent = matches.length
-          ? matches.map(song => {
-              const addedBy = song.user_id ? `@silent <@${song.user_id}>` : `@silent @${song.user_name}`;
-              const date = new Date(song.added_at).toLocaleDateString();
-              const link = `[**${song.title}**](<${song.url}>)`;
-              return `${link} by ${song.artist} (${song.album})\n→ Added by ${addedBy} on ${date}`;
-            }).join('\n\n')
-          : '❌ No matching songs found.';
-    
+
+        if (matches.length === 0) {
+          return res.send({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: '❌ No matching songs found.',
+              flags: InteractionResponseFlags.SUPPRESS_EMBEDS,
+            },
+          });
+        }
+
+        // Create an embed object
+        const embed = {
+          title: '🔍 Query Results',
+          description: 'Here are the songs matching your query:',
+          color: 0x1db954, // Spotify green color
+          fields: matches.map(song => ({
+            name: `**${song.title}** by **${song.artist}**`,
+            value: [
+              `**[Link to Song](${song.url})**`,
+              song.album && song.album !== 'Unknown Album' ? `**Album**: ${song.album}` : '',
+              `**Genre**: ${song.genre || 'Unknown Genre'}`,
+              `**Added by**: <@${song.user_id}> on <t:${song.added_at}:F>`,
+            ]
+              .filter(Boolean) // Remove empty values
+              .join('\n'),
+          }))
+        };
+
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
-            content: responseContent,
+            embeds: [embed],
           },
         });
       } catch (err) {
@@ -207,6 +250,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
             content: '❌ Something went wrong while searching songs.',
+            flags: InteractionResponseFlags.SUPPRESS_EMBEDS,
           },
         });
       }

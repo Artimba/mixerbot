@@ -30,8 +30,8 @@ client.on('messageCreate', async (message) => {
     if (urls) {
         console.log(`Found ${urls.length} YouTube URLs in message from ${message.author.username}: ${urls.join(', ')}`);
         urls.forEach(url => {
-
-        insertSong({ url, user: message.author });
+        console.log(`Timestamp: ${message.createdTimestamp}`);
+        insertSong({ url, user: message.author , timestamp: message.createdTimestamp });
 
         recentSongs.push({
             url,
@@ -40,7 +40,8 @@ client.on('messageCreate', async (message) => {
                 username: message.author.username,
                 discriminator: message.author.discriminator,
                 avatar: message.author.avatarURL(),
-            }
+            },
+            timestamp: message.createdTimestamp,
         });
         console.log(`Added song URL: ${url} by user: ${message.author.username}`);
         });
