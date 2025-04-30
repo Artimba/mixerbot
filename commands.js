@@ -109,8 +109,26 @@ const QUERY_SONGS_COMMAND = {
   contexts: [0, 2],
 };
 
+// Update song with last FM metadata
+const UPDATE_SONG_METADATA_COMMAND = {
+  name: 'lastfm',
+  description: 'Update song metadata with Last.fm data',
+  type: 1,
+  options: [
+    {
+      // song name
+      type: 3, // String type
+      name: 'title',
+      description: 'The name of the song to update',
+      required: true,
+    },
+  ],
+  integration_types: [0, 1],
+  contexts: [0, 2],
+};
 
-const ALL_COMMANDS = [TEST_COMMAND, SET_CHANNEL_COMMAND, RECENT_SONGS_COMMAND, SCAN_CHANNEL_COMMAND, QUERY_SONGS_COMMAND];
+
+const ALL_COMMANDS = [TEST_COMMAND, SET_CHANNEL_COMMAND, RECENT_SONGS_COMMAND, SCAN_CHANNEL_COMMAND, QUERY_SONGS_COMMAND, UPDATE_SONG_METADATA_COMMAND, SET_BOT_CONTROLLER_ROLE_COMMAND];
 
 // InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
 InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);

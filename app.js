@@ -10,16 +10,32 @@ import {
 } from 'discord-interactions';
 import { fetchMusic, extractYouTubeLinks, insertSong } from './mixer.js';
 import { saveChannelId, loadChannelId } from './utils.js';
+import { updateSongWithLastFmData } from './lastfm.js';
+import { getSongById } from './crud.js';
 import db from './db.js';
 
 // Create an express app
 const app = express();
 // Get port, or default to 3000
 const PORT = process.env.PORT || 3000;
-
+const DISCORD_API = 'https://discord.com/api/v10';
+const APP_ID = process.env.APP_ID; 
 const targetChannelID = loadChannelId();
 
 
+// Helper to build a Discord embed from a song row ------------------
+const songEmbed = song => ({
+  title: `🎧  ${song.title}`,
+  description: `by **${song.artist}**`,
+  color: 0x1db954,
+  fields: [
+    song.album   ? { name: 'Album',   value: song.album,   inline: true } : null,
+    song.primary_genre   ? { name: 'primary_genre',   value: song.primary_genre,   inline: true } : null,
+    song.year    ? { name: 'Year',    value: String(song.year), inline: true } : null,
+    song.duration? { name: 'Length',  value: `${song.duration}s`, inline: true } : null,
+  ].filter(Boolean),
+  footer: { text: `Added by <@${song.user_id}> • ID ${song.id}` },
+});
 
 /**
  * Interactions endpoint URL where Discord will send HTTP requests
@@ -89,7 +105,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     // Query recent songs command
     if (name === 'recentsongs') {
       try {
-        const recentSongs = db.prepare('SELECT * FROM songs ORDER BY id DESC LIMIT 10').all();
+        const recentSongs = db.prepare('SELECT * FROM songs ORDER BY added_at DESC, id DESC LIMIT 10').all();
 
         if (recentSongs.length === 0) {
           return res.send({
@@ -111,7 +127,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
             value: [
               `**[Link to Song](${song.url})**`,
               song.album && song.album !== 'Unknown Album' ? `**Album**: ${song.album}` : '',
-              `**Genre**: ${song.genre || 'Unknown Genre'}`,
+              `**Genre**: ${song.primary_genre || 'Unknown genre'}`,
               `**Added by**: <@${song.user_id}> on <t:${song.added_at}:F>`,
             ]
               .filter(Boolean) // Remove empty values
@@ -140,36 +156,87 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
       }
     }
 
-    // Scan channel command
+    // // Scan channel command
+    // if (name === 'scanmusic') {
+    //   try {
+    //     const messages = await fetchMusic(targetChannelID);
+    //     const urls = extractYouTubeLinks(messages);
+    //     const existing = db.prepare('SELECT url FROM songs').all().map(s => s.url);
+
+    //     let newCount = 0;
+    //     for (const { url, user, id, timestamp } of urls) {
+    //       if (!existing.includes(url)) {
+    //         await insertSong({ url, user: { id: id, username: user }, timestamp });
+    //         newCount++;
+    //       }
+    //     }
+
+    //     return res.send({
+    //       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+    //       data: {
+    //         content: `✅ Scanned ${urls.length} links. ${newCount} new songs added.`,
+    //       },
+    //     });
+    //   } catch (err) {
+    //     console.error('Error scanning music:', err);
+    //     return res.send({
+    //       type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+    //       data: {
+    //         content: '❌ An error occurred while scanning the channel.',
+    //       },
+    //     });
+    //   }
+    // }
     if (name === 'scanmusic') {
-      try {
-        const messages = await fetchMusic(targetChannelID);
-        const urls = extractYouTubeLinks(messages);
-        const existing = db.prepare('SELECT url FROM songs').all().map(s => s.url);
-
-        let newCount = 0;
-        for (const { url, user, id, timestamp } of urls) {
-          if (!existing.includes(url)) {
-            await insertSong({ url, user: { id: id, username: user }, timestamp });
-            newCount++;
+      // 1️⃣  Defer right away so Discord shows “*Bot is thinking…*”
+      res.send({
+        type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+      });
+    
+      // 2️⃣  Do the heavy work in the background
+      (async () => {
+        try {
+          const messages = await fetchMusic(targetChannelID);
+          const urls     = extractYouTubeLinks(messages);
+          const existing = db.prepare('SELECT url FROM songs').all().map(r => r.url);
+    
+          let newCount = 0;
+          for (const { url, user, id, timestamp } of urls) {
+            if (!existing.includes(url)) {
+              await insertSong({ url, user: { id, username: user }, timestamp });
+              newCount++;
+            }
           }
+    
+          // 3️⃣  Edit the original reply to show the result
+          await fetch(
+            `${DISCORD_API}/webhooks/${APP_ID}/${req.body.token}/messages/@original`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                content: `✅ Scanned ${urls.length} links. **${newCount}** new songs added.`,
+              }),
+            }
+          );
+        } catch (err) {
+          console.error('Error scanning music:', err);
+    
+          // Update the deferred reply with an error message
+          await fetch(
+            `${DISCORD_API}/webhooks/${APP_ID}/${req.body.token}/messages/@original`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                content: '❌ An error occurred while scanning the channel.',
+              }),
+            }
+          );
         }
-
-        return res.send({
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: `✅ Scanned ${urls.length} links. ${newCount} new songs added.`,
-          },
-        });
-      } catch (err) {
-        console.error('Error scanning music:', err);
-        return res.send({
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: '❌ An error occurred while scanning the channel.',
-          },
-        });
-      }
+      })();
+    
+      return;              // we already responded; nothing else to send
     }
 
     // Query songs command
@@ -230,7 +297,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
             value: [
               `**[Link to Song](${song.url})**`,
               song.album && song.album !== 'Unknown Album' ? `**Album**: ${song.album}` : '',
-              `**Genre**: ${song.genre || 'Unknown Genre'}`,
+              `**Genre**: ${song.primary_genre || 'Unknown genre'}`,
               `**Added by**: <@${song.user_id}> on <t:${song.added_at}:F>`,
             ]
               .filter(Boolean) // Remove empty values
@@ -254,6 +321,64 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           },
         });
       }
+    }
+
+    // Update song metadata with Last.fm command
+    if (name === 'lastfm') {
+      console.dir(req.body, { depth: null });   // <-- delete later
+      // 1. Grab the "title" option (required)
+      const options = data.options || [];
+      const titleQuery = options.find(o => o.name === 'title')?.value?.toLowerCase();
+      if (!titleQuery) {
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: `Unable to find song ${titleQuery} in database.`,
+            flags: InteractionResponseFlags.EPHEMERAL,
+          },
+        });
+      }
+
+      // 2. Fuzzy match: pick most recent song whose title contains the query
+      const row = db
+        .prepare('SELECT * FROM songs WHERE LOWER(title) LIKE ? ORDER BY id DESC LIMIT 1')
+        .get(`%${titleQuery}%`);
+
+      if (!row) {
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: '❌ No song found matching that title.',
+            flags: InteractionResponseFlags.EPHEMERAL,
+          },
+        });
+      }
+
+      // 3. Enrich via Last.fm (fills album/year/primary_genre/duration if missing)
+      try {
+        await updateSongWithLastFmData(row.id);
+      } catch (err) {
+        console.error('Error updating song with Last.fm data:', err);
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: '❌ Failed to update song metadata with Last.fm.',
+            flags: InteractionResponseFlags.SUPPRESS_EMBEDS,
+          },
+        });
+      }
+
+      // 4. Fetch fresh row & craft embed
+      const updated = getSongById(row.id);
+      const embed   = songEmbed(updated);
+
+      return res.send({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: '✅ Metadata updated!',
+          embeds: [embed],
+        },
+      });
     }
 
     console.error(`unknown command: ${name}`);

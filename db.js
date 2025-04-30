@@ -9,7 +9,7 @@ db.exec(`
         artist TEXT NOT NULL,
         album TEXT,
         year INTEGER,
-        genre TEXT,
+        primary_genre TEXT,
         duration INTEGER,
         url TEXT UNIQUE NOT NULL,
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -33,7 +33,20 @@ db.exec(`
         PRIMARY KEY (playlist_id, song_id),
         FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
         FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
-        UNIQUE (playlist_id, song_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS genres (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS song_genres (
+        song_id INTEGER NOT NULL,
+        genre_id INTEGER NOT NULL,
+        PRIMARY KEY (song_id, genre_id),
+
+        FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+        FOREIGN KEY (genre_id) REFERENCES genres(id) ON DELETE CASCADE
     );
     `);
 

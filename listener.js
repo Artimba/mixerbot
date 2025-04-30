@@ -24,7 +24,7 @@ client.on('messageCreate', async (message) => {
     if (message.channel.id !== targetChannelID) return;
     if (message.author.bot) return;
 
-    const youtubeRegex = /(https?:\/\/(?:www\.)?(?:music\.)?youtube\.com\/[^\s]+)/g;
+    const youtubeRegex = /(https?:\/\/(?:www\.)?(?:music\.)?youtube\.com\/[^\s]+|https?:\/\/youtu\.be\/[^\s]+)/g;
     const urls = message.content.match(youtubeRegex);
 
     if (urls) {
