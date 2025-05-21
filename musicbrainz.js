@@ -4,6 +4,34 @@ import { getLastFmMetadata } from './lastfm.js';
 const BASE_URL = 'https://musicbrainz.org/ws/2';
 const USER_AGENT = 'MixerBot/1.0 (ibiswhite23@gmail.com)';
 
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function rateLimitedFetchJson(url) {
+    const lastRequestTime = 0; // Initialize lastRequestTime to 0
+    const timeSinceLast = Date.now() - lastRequestTime;
+
+    const MIN_REQUEST_INTERVAL = 1000; // 1 second
+    if (timeSinceLast < MIN_REQUEST_INTERVAL) {
+        const waitTime = MIN_REQUEST_INTERVAL - timeSinceLast;
+        console.log(`Rate limit hit. Waiting for ${waitTime}ms...`);
+        await delay(waitTime);
+    }
+
+    lastRequestTime = Date.now();
+
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': USER_AGENT,
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch data: ${response.statusText}`);
+    }
+    return response.json();
+}
+
 const fetchJson = async (url) => {
     const response = await fetch(url, {
         headers: {
@@ -23,7 +51,7 @@ async function searchRecording({ title, artist }) {
         limit: '5',
     });
     const url = `${BASE_URL}/recording/?${params}`;
-    const data = await fetchJson(url);
+    const data = await rateLimitedFetchJson(url);
     // console.log(`MusicBrainz search URL: ${url}`);
     // console.log('MusicBrainz search result:', JSON.stringify(data, null, 2));
     return data.recordings?.[0] ?? null; // pick the first hit
@@ -46,18 +74,35 @@ function parseMB(recording) {
 
 export async function getMusicBrainzMetadata({ title, artist }) {
     console.log(`Searching MusicBrainz for: "${title}" by "${artist}"`);
-    // Search MusicBrainz using only recording title
-    let meta = parseMB(await searchRecording({ title, artist: null }));
-    console.log('Initial MusicBrainz metadata:', JSON.stringify(meta, null, 2));
-    if (meta?.genres?.length) return meta;
+
+    let meta = null;
+
+    try {
+        // Search MusicBrainz using both title and artist
+        meta = parseMB(await searchRecording({ title, artist }));
+        console.log('Initial MusicBrainz metadata:', JSON.stringify(meta, null, 2));
+        if (meta?.genres?.length) return meta;
+    } catch (err) {
+        console.warn(`MusicBrainz search failed: ${err.message}`);
+    }
 
     // If no genres found, search last.fm using title
-    meta = await getLastFmMetadata(title, artist);
-    if (meta?.genres?.length) return meta;
+    try {
+        meta = await getLastFmMetadata(title, artist);
+        if (meta?.genres?.length) return meta;
+    } catch (err) {
+        console.warn(`Last.fm search failed: ${err.message}`);
+    }
 
     // If still no genres, search MusicBrainz with artist
     console.log(`No genres found for "${title}", searching with artist "${artist}"`);
-    meta = parseMB(await searchRecording({ title: null, artist }));
+    try {
+        meta = parseMB(await searchRecording({ title: null, artist }));
+        console.log('Fallback MusicBrainz metadata:', JSON.stringify(meta, null, 2));
+        if (meta?.genres?.length) return meta;
+    } catch (err) {
+        console.warn(`Fallback MusicBrainz search failed: ${err.message}`);
+    }
 
     // Forfeit, caller should prompt user to add genres manually
     return meta || null;

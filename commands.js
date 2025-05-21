@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { capitalize, InstallGlobalCommands, InstallGuildCommands } from './utils.js';
+import db from './db.js';
 
 // Get the game choices from game.js
 function createCommandChoices() {
@@ -14,6 +15,14 @@ function createCommandChoices() {
   }
 
   return commandChoices;
+}
+
+function createGenreChoices() {
+  const genres = db.prepare('SELECT name FROM genres ORDER BY name').all();
+  return genres.map(genre => ({
+    name: capitalize(genre.name),
+    value: genre.name.toLowerCase(),
+  }));
 }
 
 // Simple test command
@@ -127,8 +136,145 @@ const UPDATE_SONG_METADATA_COMMAND = {
   contexts: [0, 2],
 };
 
+// Random song command (with genre/user prompt) [TODO]
+const RANDOM_SONG_COMMAND = {
+  name: 'randomsong',
+  description: 'Get a random song from the music channel',
+  type: 1,
+  options: [
+    {
+      type: 3,
+      name: 'genre1',
+      description: 'First genre',
+      required: false,
+      autocomplete: true
+    },
+    {
+      type: 3,
+      name: 'genre2',
+      description: 'Second genre',
+      required: false,
+      autocomplete: true
+    },
+    {
+      type: 3,
+      name: 'genre3',
+      description: 'Third genre',
+      required: false,
+      autocomplete: true
+    },
+    {
+      type: 6,
+      name: 'user1',
+      description: 'First user',
+      required: false,
+    },
+    {
+      type: 6,
+      name: 'user2',
+      description: 'Second user',
+      required: false,
+    },
+    {
+      type: 6,
+      name: 'user3',
+      description: 'Third user',
+      required: false,
+    }
+  ],
+  integration_types: [0, 1],
+  contexts: [0, 2],
+}
 
-const ALL_COMMANDS = [TEST_COMMAND, SET_CHANNEL_COMMAND, RECENT_SONGS_COMMAND, SCAN_CHANNEL_COMMAND, QUERY_SONGS_COMMAND, UPDATE_SONG_METADATA_COMMAND, SET_BOT_CONTROLLER_ROLE_COMMAND];
+const DELETE_SONG_COMMAND = {
+  name: 'deletesong',
+  description: 'Delete a song or set of songs from the database',
+  type: 1,
+  options: [
+    {
+      type: 3,
+      name: 'url',
+      description: 'URL of the song to delete',
+      required: false,
+    },
+    {
+      type: 4, // INTEGER
+      name: 'id',
+      description: 'Song ID to delete',
+      required: false,
+    },
+    {
+      type: 3,
+      name: 'title',
+      description: 'Delete song(s) by title (partial match)',
+      required: false,
+    },
+    {
+      type: 6,
+      name: 'user',
+      description: 'Delete all songs added by this user (admin only)',
+      required: false,
+    },
+    {
+      type: 3,
+      name: 'artist',
+      description: 'Delete all songs by artist (admin only)',
+      required: false,
+    },
+  ],
+  integration_types: [0, 1],
+  contexts: [0, 2],
+};
+
+// fix genres
+const FIX_GENRES_COMMAND = {
+  name: 'fixgenres',
+  description: 'Auto prompt all unknown genres to be fixed',
+  type: 1,
+  integration_types: [0, 1],
+  contexts: [0, 2],
+  default_member_permissions: 8, // 8 is the permission for administrator
+};
+
+const SET_GENRE_COMMAND = {
+  name: 'setgenre',
+  description: 'Set one or more genres for the current song',
+  type: 1,
+  options: [
+    {
+      type: 3,
+      name: 'genre1',
+      description: 'Primary genre',
+      required: true,
+      autocomplete: true,
+    },
+    {
+      type: 3,
+      name: 'genre2',
+      description: 'Secondary genre (optional)',
+      required: false,
+      autocomplete: true,
+    },
+    {
+      type: 3,
+      name: 'genre3',
+      description: 'Third genre (optional)',
+      required: false,
+      autocomplete: true,
+    },
+    {
+      type: 3,
+      name: 'genre4',
+      description: 'Fourth genre (optional)',
+      required: false,
+      autocomplete: true,
+    },
+  ],
+  integration_types: [0, 1],
+  contexts: [0, 2],
+};
+
+const ALL_COMMANDS = [TEST_COMMAND, SET_CHANNEL_COMMAND, RECENT_SONGS_COMMAND, SCAN_CHANNEL_COMMAND, QUERY_SONGS_COMMAND, UPDATE_SONG_METADATA_COMMAND, SET_BOT_CONTROLLER_ROLE_COMMAND, RANDOM_SONG_COMMAND, DELETE_SONG_COMMAND, FIX_GENRES_COMMAND, SET_GENRE_COMMAND];
 
 // InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
 InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);

@@ -3,29 +3,51 @@ import emojiRegex from 'emoji-regex';
 import { getYouTubeMetadata, extractVideoId } from './youtube.js';
 // import { getLastFmMetadata } from './lastfm.js';
 import { getMusicBrainzMetadata } from './musicbrainz.js';
-import { addGenreToSong } from './crud.js';
+import { addGenre, addGenreToSong } from './crud.js';
 import db from './db.js';
 
-export async function fetchMusic(channelId) {
-    const url = `https://discord.com/api/v10/channels/${channelId}/messages?limit=100`;
+export async function fetchMusic(channelId, limit = 500) {
+    const allMessages = [];
+    let lastMessageId = null;
 
-    const response = await fetch(url, {
-        headers: {
-            Authorization: 'Bot ' + process.env.DISCORD_TOKEN,
-        },
-    });
+    while (allMessages.length < limit) {
+        const batchSize = Math.min(100, limit - allMessages.length);
+        const url = new URL(`https://discord.com/api/v10/channels/${channelId}/messages`);
+        url.searchParams.set('limit', batchSize);
+        if (lastMessageId) {
+            url.searchParams.set('before', lastMessageId);
+        }
 
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-        console.error('Invalid response from Discord API:', data);
-        throw new Error('Invalid response from Discord API');
+        console.log(`Fetching ${batchSize} messages${lastMessageId ? ` before ${lastMessageId}` : ''}`);
 
+        const response = await fetch(url.toString(), {
+            headers: {
+                Authorization: 'Bot ' + process.env.DISCORD_TOKEN,
+            },
+        });
+
+        const data = await response.json();
+
+        if (!Array.isArray(data)) {
+            console.error('Invalid response from Discord API:', data);
+            throw new Error('Invalid response from Discord API');
+        }
+
+        if (data.length === 0) {
+            console.log('No more messages returned by Discord API.');
+            break;
+        }
+
+        allMessages.push(...data);
+        lastMessageId = data[data.length - 1].id;
+
+        console.log(`Fetched ${data.length} messages. Total so far: ${allMessages.length}`);
     }
 
-    return data
-        .filter(message => !message.author.bot) // Ignore bot messages
+    return allMessages
+        .filter(message => !message.author?.bot)
         .map(message => {
-            const timestamp = new Date(message.timestamp).getTime(); // Convert ISO timestamp to milliseconds
+            const timestamp = new Date(message.timestamp).getTime();
             console.log(`Message timestamp: ${timestamp}`);
             return {
                 id: message.id,
@@ -36,7 +58,7 @@ export async function fetchMusic(channelId) {
                     avatar: message.author.avatar,
                 },
                 content: message.content,
-                timestamp, // Use the parsed timestamp
+                timestamp,
             };
         });
 }
@@ -117,14 +139,13 @@ export async function insertSong({ url, user, timestamp }) {
     );
 
     // // Retrieve the last inserted row ID
-    // const songId = info.lastInsertRowid;
+    const songId = info.lastInsertRowid;
 
-    // // Add rest of genres to the song
-    // if (meta?.genres?.length) {
-    //     for (const genre of meta.genres) {
-    //         addGenreToSong({ songId, genre });
-    //     }
-    // }
+    if (meta?.genres?.length && songId) {
+        for (const genre of meta.genres) {
+            addGenreToSong(songId, genre);
+        }
+    }
 
     console.log(`Inserted song "${title}" by ${artist}`);
 }

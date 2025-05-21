@@ -75,8 +75,17 @@ export function addGenre(name) {
 }
 
 export function addGenreToSong(songId, genreName) {
-    const gid = addGenre(genreName);
-    return linkSongGenre.run(songId, gid).changes;
+  const name = genreName.trim().toLowerCase();
+
+  insertGenre.run(name);
+  const genreRow = selectGenre.get(name);
+
+  if (!genreRow) {
+    console.warn(`Failed to retrieve genre ID for: "${name}"`);
+    return 0;
+  }
+
+  return linkSongGenre.run(songId, genreRow.id).changes;
 }
 
 export function removeGenreFromSong(songId, genreName) {
